@@ -88,12 +88,28 @@ fn job_row(id: u64, handle: &crate::job::Handle, cx: &mut Context<AppView>) -> A
                 .into_any_element()
         }
     } else {
-        Button::new(format!("job-dismiss-{id}"))
-            .ghost()
-            .label("✕")
-            .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
-                this.dismiss_job(id, cx);
-            }))
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new(format!("job-copy-{id}"))
+                    .ghost()
+                    .label("⧉")
+                    .tooltip("Copy the log to the clipboard")
+                    .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.copy_job_log(id, cx);
+                    })),
+            )
+            .child(
+                Button::new(format!("job-dismiss-{id}"))
+                    .ghost()
+                    .label("✕")
+                    .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.dismiss_job(id, cx);
+                    })),
+            )
             .into_any_element()
     };
 

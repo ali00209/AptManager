@@ -487,6 +487,37 @@ impl AppView {
         cx.notify();
     }
 
+    /// Copy a finished job's headline, result and full log to the clipboard.
+    pub(crate) fn copy_job_log(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(job) = self.jobs.iter().find(|j| j.id == id) else {
+            return;
+        };
+        let Ok(p) = job.handle.lock() else {
+            return;
+        };
+        let result = if !p.ok {
+            "failed"
+        } else if p.summary.starts_with("Cancelled") {
+            "cancelled"
+        } else {
+            "done"
+        };
+        let mut text = format!("{}: {result}\n", p.title);
+        if !p.summary.is_empty() {
+            text.push_str(&p.summary);
+            text.push('\n');
+        }
+        text.push('\n');
+        for line in &p.log {
+            text.push_str(line);
+            text.push('\n');
+        }
+        drop(p);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.status = "Job log copied to the clipboard.".into();
+        cx.notify();
+    }
+
     /// Remove a finished job's row from the panel.
     pub(crate) fn dismiss_job(&mut self, id: u64, cx: &mut Context<Self>) {
         self.jobs.retain(|j| j.id != id || !job_done(&j.handle));

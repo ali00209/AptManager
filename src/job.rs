@@ -14,6 +14,8 @@ use crate::model::ActionResult;
 use crate::track::{self, Sink};
 
 const TAIL_LINES: usize = 8;
+/// Most lines kept for the whole log of a job, for copying. The oldest lines go first.
+const LOG_LINES: usize = 5000;
 
 #[derive(Default)]
 pub struct Progress {
@@ -22,6 +24,8 @@ pub struct Progress {
     pub percent: Option<f32>,
     /// The most recent lines of output.
     pub tail: VecDeque<String>,
+    /// Every line of output, up to `LOG_LINES`, for copying.
+    pub log: VecDeque<String>,
     pub done: bool,
     pub ok: bool,
     pub summary: String,
@@ -93,7 +97,7 @@ pub fn log_to(handle: &Handle, lane: &str, line: &str) {
         if let Some(i) = parts.iter().position(|s| s.trim().parse::<f32>().is_ok()) {
             let message = parts[i + 1..].join(":");
             if !message.trim().is_empty() {
-                push(&mut p.tail, format!("{}{}", prefix(lane), message.trim()));
+                record(&mut p, format!("{}{}", prefix(lane), message.trim()));
             }
         }
         return;
@@ -103,7 +107,7 @@ pub fn log_to(handle: &Handle, lane: &str, line: &str) {
     } else {
         format!("[{lane}] {line}")
     };
-    push(&mut p.tail, text);
+    record(&mut p, text);
 }
 
 fn prefix(lane: &str) -> String {
@@ -121,6 +125,15 @@ pub fn set_percent(percent: f32) {
             p.percent = Some(percent.clamp(0.0, 100.0));
         }
     }
+}
+
+/// Add a line to the job's tail and to its full log.
+fn record(p: &mut Progress, line: String) {
+    p.log.push_back(line.clone());
+    while p.log.len() > LOG_LINES {
+        p.log.pop_front();
+    }
+    push(&mut p.tail, line);
 }
 
 fn push(tail: &mut VecDeque<String>, line: String) {
@@ -146,7 +159,7 @@ pub fn request_cancel(handle: &Handle) {
     let sink = match handle.lock() {
         Ok(mut p) => {
             p.cancel_requested = true;
-            push(&mut p.tail, "Cancel requested. Stopping after the current step…".into());
+            record(&mut p, "Cancel requested. Stopping after the current step…".into());
             p.sink.clone()
         }
         Err(_) => return,

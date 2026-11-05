@@ -193,7 +193,8 @@ rollback follows after it. The result says what was undone and what could not be
 
 Installs, removals and upgrades run as jobs. You can start several at once; each job has
 its own progress row with a bar, the latest output line and its own **Cancel** button.
-A finished job shows its result and can be dismissed with ✕.
+A finished job shows its result. **⧉** copies its headline, result and full log to the clipboard
+(the last 5,000 lines), and **✕** removes its row.
 
 - A package can be in only one job at a time. If you start a job that includes a package
   another job is already changing, the new job refuses at once and says which job holds it.
