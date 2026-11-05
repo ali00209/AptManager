@@ -5,11 +5,12 @@
 //! polkit agent asks for a password. User-installation changes run as the
 //! current user without any prompt.
 
+use crate::track::OutputTracked;
 use std::collections::{BTreeMap, HashSet};
 use std::process::Command;
 
 use crate::model::{parse_human_size, ActionResult, Package, Source};
-use crate::{job, privileged};
+use crate::privileged;
 
 const REMOTE_COLUMNS: &str = "--columns=application,name,version,origin,installed-size,download-size,description";
 const INSTALLED_COLUMNS: &str = "--columns=application,name,version,origin,size,installation";
@@ -18,7 +19,7 @@ const INSTALLED_COLUMNS: &str = "--columns=application,name,version,origin,size,
 pub fn is_available() -> bool {
     Command::new("flatpak")
         .arg("--version")
-        .output()
+        .output_tracked()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -176,6 +177,7 @@ fn base_package(id: &str) -> Package {
         homepage: String::new(),
         upgradable: false,
         icon: None,
+        online: false,
     }
 }
 
@@ -183,67 +185,16 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// Install Flatpak apps from one remote, system-wide.
-pub fn install(origin: &str, ids: &[String]) -> ActionResult {
-    if ids.is_empty() {
-        return ActionResult::err("Nothing selected.");
-    }
-    let mut args = vec!["install", "-y", "--system"];
-    if !origin.is_empty() {
-        args.push(origin);
-    }
-    args.extend(ids.iter().map(String::as_str));
-    run_privileged(&args)
-}
-
-/// Remove one Flatpak app from the installation it lives in.
-pub fn remove(id: &str, scope: &str) -> ActionResult {
-    if scope == "user" {
-        run_plain(&["uninstall", "-y", "--user", id])
-    } else {
-        run_privileged(&["uninstall", "-y", "--system", id])
-    }
-}
-
-/// Update every Flatpak app. `has_user` / `has_system` say which installations have apps.
-pub fn update_all(has_user: bool, has_system: bool) -> ActionResult {
-    let mut messages = Vec::new();
-    if has_user {
-        let r = run_plain(&["update", "-y", "--user"]);
-        if !r.success {
-            return r;
-        }
-        messages.push(r.summary);
-    }
-    if has_system {
-        let r = run_privileged(&["update", "-y", "--system"]);
-        if !r.success {
-            return r;
-        }
-        messages.push(r.summary);
-    }
-    if messages.is_empty() {
-        ActionResult::ok("No Flatpak apps to update.")
-    } else {
-        ActionResult::ok(messages.join(" · "))
-    }
-}
-
 /// System-wide Flatpak change, run through the privileged helper.
 fn run_privileged(args: &[&str]) -> ActionResult {
     privileged::run("flatpak", args)
-}
-
-/// Per-user Flatpak change, streamed into the current job. Needs no password.
-fn run_plain(args: &[&str]) -> ActionResult {
-    job::run_streamed("flatpak", args)
 }
 
 fn run_capture(args: &[&str]) -> String {
     Command::new("flatpak")
         .args(args)
         .env("LC_ALL", "C")
-        .output()
+        .output_tracked()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
 }

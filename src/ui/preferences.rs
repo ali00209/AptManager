@@ -178,7 +178,6 @@ impl AppView {
                         Button::new(("rm-remote", ix))
                             .danger()
                             .label("Remove")
-                            .disabled(self.busy)
                             .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                                 this.remove_remote(name.clone(), cx);
                             })),
@@ -197,7 +196,6 @@ impl AppView {
                         Button::new("add-remote")
                             .primary()
                             .label("Add remote")
-                            .disabled(self.busy)
                             .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
                                 this.add_remote(cx);
                             })),

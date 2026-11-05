@@ -4,6 +4,7 @@
 //! `apt-cache` and `dpkg-query` (no privileges needed). Write operations go
 //! through `pkexec apt-get` so the desktop's polkit agent prompts for a password.
 
+use crate::track::OutputTracked;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -266,36 +267,11 @@ pub fn refresh_lists() -> ActionResult {
     privileged::run("apt-get", &["update"])
 }
 
-/// `apt-get install` for the given packages.
-pub fn install(names: &[String]) -> ActionResult {
-    if names.is_empty() {
-        return ActionResult::err("Nothing selected.");
-    }
-    let mut args = vec!["install"];
-    args.extend(names.iter().map(String::as_str));
-    privileged::run("apt-get", &args)
-}
-
-/// `apt-get remove` for the given packages.
-pub fn remove(names: &[String]) -> ActionResult {
-    if names.is_empty() {
-        return ActionResult::err("Nothing selected.");
-    }
-    let mut args = vec!["remove"];
-    args.extend(names.iter().map(String::as_str));
-    privileged::run("apt-get", &args)
-}
-
-/// `apt-get upgrade` — upgrade every installed package that has a newer candidate.
-pub fn upgrade_all() -> ActionResult {
-    privileged::run("apt-get", &["upgrade"])
-}
-
 fn run_capture(program: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
-        .output()
+        .output_tracked()
         .map_err(|e| format!("failed to run {program}: {e}"))?;
     // apt-cache may exit non-zero on partial data; keep whatever stdout we got.
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())

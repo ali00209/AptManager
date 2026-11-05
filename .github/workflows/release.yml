@@ -1,0 +1,114 @@
+name: Release
+
+# Run by hand from the Actions tab. Pick which part of the version to increase.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increase
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Bump, build and publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GPUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-xkb-dev libxcb-render-util0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-icccm4-dev libxcb-image0-dev \
+            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-xinput-dev libfontconfig1-dev \
+            libasound2-dev libssl-dev pkg-config libvulkan-dev imagemagick
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests before releasing
+        run: cargo test --all-targets
+
+      - name: Increase the version and tag it
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          CURRENT=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) echo "Unknown bump: $BUMP"; exit 1 ;;
+          esac
+          NEW="$MAJOR.$MINOR.$PATCH"
+          TAG="v$NEW"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"; exit 1
+          fi
+          sed -i "0,/^version = \".*\"/s//version = \"$NEW\"/" Cargo.toml
+          cargo build --release
+          echo "CURRENT=$CURRENT" >> "$GITHUB_ENV"
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Commit the new version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "Release $TAG"
+          git tag "$TAG"
+          git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
+          git push origin "$TAG"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: Build the .deb package
+        run: |
+          cargo deb --no-build
+          mkdir -p dist
+          cp target/debian/*.deb "dist/apt-manager_${NEW}_amd64.deb"
+
+      - name: Build the AppImage
+        run: |
+          APPDIR=AppDir
+          mkdir -p "$APPDIR/usr/bin"
+          cp target/release/apt-manager "$APPDIR/usr/bin/apt-manager"
+          cp packaging/apt-manager.desktop "$APPDIR/apt-manager.desktop"
+          convert -size 256x256 xc:'#3b82f6' "$APPDIR/apt-manager.png"
+          ln -sf apt-manager.png "$APPDIR/.DirIcon"
+          cat > "$APPDIR/AppRun" <<'APPRUN'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/apt-manager" "$@"
+          APPRUN
+          chmod +x "$APPDIR/AppRun"
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$APPDIR" "dist/Apt_Manager-${NEW}-x86_64.AppImage"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "Apt Manager $TAG" \
+            --generate-notes \
+            --target "$(git rev-parse HEAD)"

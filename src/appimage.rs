@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::model::{ActionResult, Package, Source};
+use crate::model::{Package, Source};
 
 /// Folder that AppImages are read from.
 pub fn directory() -> PathBuf {
@@ -57,6 +57,7 @@ pub fn load() -> Vec<Package> {
                 homepage: String::new(),
                 upgradable: false,
                 icon: None,
+                online: false,
             }
         })
         .collect();
@@ -64,15 +65,6 @@ pub fn load() -> Vec<Package> {
     packages.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
     packages
 }
-
-/// Delete an AppImage file.
-pub fn remove(path: &str) -> ActionResult {
-    match fs::remove_file(path) {
-        Ok(()) => ActionResult::ok(format!("Removed {}", file_label(path))),
-        Err(e) => ActionResult::err(format!("Could not remove {}: {e}", file_label(path))),
-    }
-}
-
 /// Start an AppImage. Makes it executable first if it isn't already.
 pub fn launch(path: &str) -> Result<(), String> {
     let path = Path::new(path);
@@ -88,9 +80,46 @@ pub fn launch(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Could not start {}: {e}", path.display()))
 }
 
-fn file_label(path: &str) -> &str {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
+/// Folder where desktop entries are written, so the application menu lists AppImages.
+fn desktop_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    home.join(".local/share/applications")
+}
+
+const ENTRY_PREFIX: &str = "apt-manager-appimage-";
+
+/// Make one `.desktop` entry per AppImage in `packages`, and remove the entries of
+/// AppImages that are gone. Only files this app wrote (with `ENTRY_PREFIX`) are touched.
+pub fn sync_desktop_entries(packages: &[Package]) {
+    let dir = desktop_dir();
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let mut wanted: Vec<String> = Vec::new();
+    for pkg in packages.iter().filter(|p| p.source == Source::AppImage) {
+        let safe: String = pkg
+            .name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' })
+            .collect();
+        let file = format!("{ENTRY_PREFIX}{safe}.desktop");
+        let exec = pkg.origin.replace('\\', "\\\\").replace('"', "\\\"");
+        let text = format!(
+            "[Desktop Entry]\nType=Application\nName={}\nExec=\"{exec}\"\nTerminal=false\nCategories=Utility;\nX-Managed-By=apt-manager\n",
+            pkg.title
+        );
+        let path = dir.join(&file);
+        if fs::read_to_string(&path).map(|old| old != text).unwrap_or(true) {
+            let _ = fs::write(&path, text);
+        }
+        wanted.push(file);
+    }
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(ENTRY_PREFIX) && !wanted.contains(&name) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 }

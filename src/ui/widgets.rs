@@ -2,7 +2,6 @@
 
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
-    Disableable,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -13,19 +12,18 @@ use crate::ui::theme::*;
 
 /// Buttons for a package from a manager: Install when absent, Remove when present,
 /// and Update when a newer version is waiting.
-pub(crate) fn manager_actions(pkg: &Package, key: String, busy: bool, cx: &mut Context<AppView>) -> AnyElement {
+pub(crate) fn manager_actions(pkg: &Package, key: String, cx: &mut Context<AppView>) -> AnyElement {
     let mut col = div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(install_or_remove(pkg, key.clone(), busy, cx));
+        .child(install_or_remove(pkg, key.clone(), cx));
     if pkg.upgradable && !matches!(pkg.source, Source::Apt | Source::Flatpak) {
         let update_key = key.clone();
         col = col.child(
             Button::new("update-one")
                 .primary()
                 .label("Update")
-                .disabled(busy)
                 .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                     this.update_one(update_key.clone(), cx);
                 })),
@@ -35,12 +33,11 @@ pub(crate) fn manager_actions(pkg: &Package, key: String, busy: bool, cx: &mut C
 }
 
 /// Install or Remove button for a package.
-pub(crate) fn install_or_remove(pkg: &Package, key: String, busy: bool, cx: &mut Context<AppView>) -> AnyElement {
+pub(crate) fn install_or_remove(pkg: &Package, key: String, cx: &mut Context<AppView>) -> AnyElement {
     if pkg.is_installed() {
         Button::new("remove-one")
             .danger()
             .label("Remove")
-            .disabled(busy)
             .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                 this.remove_one(key.clone(), cx);
             }))
@@ -49,7 +46,6 @@ pub(crate) fn install_or_remove(pkg: &Package, key: String, busy: bool, cx: &mut
         Button::new("install-one")
             .primary()
             .label("Install")
-            .disabled(busy)
             .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                 this.install_one(key.clone(), cx);
             }))
@@ -58,7 +54,7 @@ pub(crate) fn install_or_remove(pkg: &Package, key: String, busy: bool, cx: &mut
 }
 
 /// Launch and Delete buttons for an AppImage.
-pub(crate) fn appimage_actions(key: String, busy: bool, cx: &mut Context<AppView>) -> AnyElement {
+pub(crate) fn appimage_actions(key: String, cx: &mut Context<AppView>) -> AnyElement {
     let launch_key = key.clone();
     div()
         .flex()
@@ -68,7 +64,6 @@ pub(crate) fn appimage_actions(key: String, busy: bool, cx: &mut Context<AppView
             Button::new("launch-appimage")
                 .primary()
                 .label("Launch")
-                .disabled(busy)
                 .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                     this.launch_appimage(&launch_key, cx);
                 })),
@@ -77,7 +72,6 @@ pub(crate) fn appimage_actions(key: String, busy: bool, cx: &mut Context<AppView
             Button::new("remove-appimage")
                 .danger()
                 .label("Delete file")
-                .disabled(busy)
                 .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
                     this.remove_one(key.clone(), cx);
                 })),
@@ -128,20 +122,18 @@ pub(crate) fn details_frame() -> Div {
         .border_color(rgb(BORDER))
 }
 
-/// What the "Section / Source" column shows for each manager.
-pub(crate) fn location_label(pkg: &Package) -> String {
-    match pkg.source {
-        Source::Apt => pkg.section.clone(),
-        Source::Flatpak => pkg.origin.clone(),
-        Source::AppImage => "AppImage".to_string(),
-        other => {
-            if pkg.origin.is_empty() {
-                other.label().to_string()
-            } else {
-                pkg.origin.clone()
-            }
-        }
-    }
+/// Small coloured chip naming the registry (manager) a package comes from.
+pub(crate) fn registry_chip(src: Source) -> AnyElement {
+    div()
+        .flex_none()
+        .px_2()
+        .rounded(px(4.))
+        .bg(rgb(src.color()))
+        .text_color(rgb(0xffffff))
+        .text_xs()
+        .whitespace_nowrap()
+        .child(src.label())
+        .into_any_element()
 }
 
 pub(crate) fn info_row(label: &'static str, value: String) -> impl IntoElement {

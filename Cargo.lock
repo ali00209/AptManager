@@ -237,6 +237,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "gpui-kit",
+ "serde",
  "serde_json",
 ]
 

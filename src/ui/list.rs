@@ -5,15 +5,14 @@ use std::ops::Range;
 
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
-    Disableable,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::model::{human_size, Source};
-use crate::ui::app::{AppView, SubTab};
+use crate::ui::app::AppView;
 use crate::ui::theme::*;
-use crate::ui::widgets::{centered_message, icon_element, location_label};
+use crate::ui::widgets::{centered_message, icon_element, registry_chip};
 
 impl AppView {
     pub(crate) fn render_browse(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -53,7 +52,7 @@ impl AppView {
             .child(div().flex_1().min_w(px(180.)).child("Name"))
             .child(div().w(px(200.)).flex_none().child("Version"))
             .child(div().w(px(100.)).flex_none().child("Size"))
-            .child(div().w(px(150.)).flex_none().child("Section / Source"))
+            .child(div().w(px(150.)).flex_none().child("Registry"))
     }
 
     pub(crate) fn render_row(&self, row: usize, idx: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -139,15 +138,7 @@ impl AppView {
                     .child(version),
             )
             .child(div().w(px(100.)).flex_none().child(human_size(size)))
-            .child(
-                div()
-                    .w(px(150.))
-                    .flex_none()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_color(rgb(MUTED))
-                    .child(location_label(pkg)),
-            )
+            .child(div().w(px(150.)).flex_none().child(registry_chip(pkg.source)))
             .into_any_element()
     }
 
@@ -231,7 +222,14 @@ impl AppView {
                     .child(if pkg.candidate.is_empty() { "—".to_string() } else { pkg.candidate.clone() }),
             )
             .child(div().flex_1().text_xs().text_color(rgb(MUTED)).overflow_hidden().child(blurb))
-            .child(div().text_xs().text_color(rgb(state.1)).child(state.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(registry_chip(pkg.source))
+                    .child(div().text_xs().text_color(rgb(state.1)).child(state.0)),
+            )
             .into_any_element()
     }
 
@@ -246,80 +244,115 @@ impl AppView {
         rows
     }
 
-    /// Banner shown for managers with no catalogue: offers to install the typed name.
-    pub(crate) fn install_hint(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let src = self.top;
-        if src.has_catalogue() || src == Source::AppImage || self.sub != SubTab::Install {
-            return None;
-        }
-        let name = self.query.trim().to_string();
+    /// Buttons offered when a search finds nothing: install the typed name with each
+    /// ticked registry that has no catalogue and supports install by name.
+    pub(crate) fn install_hints(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let name = self.submitted.clone().unwrap_or_default().trim().to_string();
         if name.is_empty() {
-            return None;
+            return Vec::new();
         }
-        if self
-            .packages
-            .iter()
-            .any(|p| p.source == src && p.name.eq_ignore_ascii_case(&name))
-        {
-            return None;
+        let options: Vec<Source> = self
+            .active_registries()
+            .into_iter()
+            .filter(|s| self.registries.contains(s) && !s.has_catalogue() && *s != Source::AppImage)
+            .collect();
+        if options.is_empty() {
+            return Vec::new();
         }
-        let label = format!("Install '{name}' with {}", src.label());
-        Some(
-            div()
-                .h(px(44.))
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_between()
-                .px_3()
-                .bg(rgb(PANEL))
-                .border_b_1()
-                .border_color(rgb(BORDER))
-                .child(div().text_color(rgb(MUTED)).child(format!("'{name}' is not installed yet.")))
-                .child(
-                    Button::new("install-by-name")
-                        .primary()
-                        .label(label)
-                        .disabled(self.busy)
-                        .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
-                            this.install_by_name(src, name.clone(), cx);
-                        })),
-                )
-                .into_any_element(),
-        )
+        let mut hints = Vec::new();
+        for src in options {
+            let typed = name.clone();
+            hints.push(
+                Button::new(src.label())
+                    .primary()
+                    .label(format!("Install '{name}' with {}", src.label()))
+                    .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.install_by_name(src, typed.clone(), cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        hints
     }
 
-    pub(crate) fn render_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !self.loaded {
-            return centered_message("Loading packages…");
+    /// What fills the list when there is nothing to show.
+    pub(crate) fn empty_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut col = div()
+            .flex_1()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .text_color(rgb(MUTED))
+            .child(self.empty_text());
+        for hint in self.install_hints(cx) {
+            col = col.child(hint);
         }
-        let hint = self.install_hint(cx);
-        if self.visible.is_empty() {
-            return div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .children(hint)
-                .child(centered_message(self.empty_text()))
-                .into_any_element();
-        }
+        col.child(
+            div()
+                .text_xs()
+                .child("AppImages: drop .AppImage files anywhere on this list to add them to ~/Applications."),
+        )
+        .into_any_element()
+    }
 
+    /// A line that says how many matches the limit hides.
+    pub(crate) fn cap_line(&self, shown: usize) -> Option<AnyElement> {
+        (self.matched > shown).then(|| {
+            div()
+                .px_3()
+                .py_1()
+                .text_xs()
+                .text_color(rgb(MUTED))
+                .child(format!(
+                    "Showing the first {shown} of {}. Refine your search to see the rest.",
+                    self.matched
+                ))
+                .into_any_element()
+        })
+    }
+
+    /// The package list. The whole list is also a drop target: AppImages, .deb and Flatpak files
+    /// dropped on it are installed.
+    pub(crate) fn render_list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let body = if !self.loaded {
+            centered_message("Reading packages…")
+        } else if self.visible.is_empty() {
+            self.empty_view(cx)
+        } else {
+            self.render_list_body(cx)
+        };
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(body)
+            .on_drop(cx.listener(|this: &mut AppView, paths: &ExternalPaths, _window, cx| {
+                this.install_dropped(paths.paths().to_vec(), cx);
+            }))
+            .into_any_element()
+    }
+
+    fn render_list_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity().clone();
         let list = uniform_list("package-rows", self.visible.len(), move |range, _window, cx| {
             view.update(cx, |this, cx| this.render_rows(range, cx))
         })
         .size_full();
 
-        div()
+        let mut col = div()
             .flex_1()
             .flex()
             .flex_col()
             .overflow_hidden()
-            .children(hint)
-            .child(self.render_column_header())
-            .child(div().flex_1().w_full().child(list))
-            .into_any_element()
+            .child(self.render_column_header());
+        if let Some(line) = self.cap_line(self.visible.len()) {
+            col = col.child(line);
+        }
+        col.child(div().flex_1().w_full().child(list)).into_any_element()
     }
 
     pub(crate) fn render_grid(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -327,7 +360,7 @@ impl AppView {
             return centered_message("Loading packages…");
         }
         if self.visible.is_empty() {
-            return centered_message(self.empty_text());
+            return self.empty_view(cx);
         }
         let shown = self.visible.len().min(GRID_LIMIT);
         let cards: Vec<AnyElement> = (0..shown)
@@ -346,29 +379,26 @@ impl AppView {
             .p_3()
             .overflow_y_scroll()
             .child(div().flex().flex_wrap().gap_3().children(cards));
-        if self.visible.len() > shown {
-            body = body.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child(format!(
-                        "Showing the first {shown} of {}. Filter or search to see the rest.",
-                        self.visible.len()
-                    )),
-            );
+        if let Some(line) = self.cap_line(shown) {
+            body = body.child(line);
         }
         body.into_any_element()
     }
 
-    pub(crate) fn empty_text(&self) -> &'static str {
-        match self.top {
-            Source::AppImage => "No AppImages found. Copy .AppImage files into ~/Applications.",
-            Source::Flatpak => "No Flatpak apps match. Is a Flatpak remote configured?",
-            src if !src.has_catalogue() => {
-                "Nothing installed here yet. Type a package name above to install it."
-            }
-            _ => "No packages match your search.",
+    pub(crate) fn empty_text(&self) -> String {
+        if self.registries.is_empty() {
+            return "Choose at least one registry.".into();
         }
+        let query = self.submitted.clone().unwrap_or_default();
+        let query = query.trim();
+        if query.is_empty() {
+            return if self.updates_only {
+                "No updates in the chosen registries.".into()
+            } else {
+                "Nothing installed in the chosen registries. Type a name and press Enter to search the catalogues.".into()
+            };
+        }
+        format!("No packages match '{query}' in the chosen registries.")
     }
 
     pub(crate) fn render_history(&self) -> AnyElement {

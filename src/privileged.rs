@@ -39,8 +39,20 @@ static HELPER: Mutex<Option<Helper>> = Mutex::new(None);
 
 /// Run `program` with `args` as root. Output goes to the current job.
 pub fn run(program: &str, args: &[&str]) -> ActionResult {
-    let Ok(mut guard) = HELPER.lock() else {
-        return ActionResult::err("The privileged helper is unavailable.");
+    // Commands take turns on the helper. While waiting, a cancelled job gives up at once.
+    let mut guard = loop {
+        match HELPER.try_lock() {
+            Ok(guard) => break guard,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if job::current_cancelled() {
+                    return ActionResult::err("Cancelled before it started.");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return ActionResult::err("The privileged helper is unavailable.");
+            }
+        }
     };
     if guard.is_none() {
         match start_helper() {
@@ -203,8 +215,13 @@ fn validate(program: &str, args: &[&str]) -> Result<Vec<String>, String> {
 
     match program {
         "apt-get" => {
+            // "--only-upgrade" is the one flag allowed: it stops apt-get from installing new packages.
+            let flags_ok = args
+                .iter()
+                .filter(|a| a.starts_with('-'))
+                .all(|a| *a == "--only-upgrade");
             if !["update", "install", "remove", "upgrade"].contains(&sub)
-                || names.iter().any(|a| a.starts_with('-'))
+                || !flags_ok
             {
                 return Err(format!("Refused apt-get {sub}"));
             }
@@ -216,7 +233,7 @@ fn validate(program: &str, args: &[&str]) -> Result<Vec<String>, String> {
             let flags_ok = args
                 .iter()
                 .filter(|a| a.starts_with('-'))
-                .all(|a| ["-y", "--system", "--if-not-exists"].contains(a));
+                .all(|a| ["-y", "--system", "--if-not-exists", "--bundle"].contains(a));
             if !["install", "uninstall", "update", "remote-add", "remote-delete"].contains(&sub)
                 || !args.contains(&"--system")
                 || !flags_ok

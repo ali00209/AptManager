@@ -3,14 +3,17 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// A package manager this app can manage. The declaration order is the order
 /// the managers appear in the preferences list and the top tab bar.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Source {
     Homebrew,
     Npm,
     Bun,
     Pip,
+    Uv,
     Cargo,
     Apt,
     Snap,
@@ -19,11 +22,12 @@ pub enum Source {
 }
 
 impl Source {
-    pub const ALL: [Source; 9] = [
+    pub const ALL: [Source; 10] = [
         Source::Homebrew,
         Source::Npm,
         Source::Bun,
         Source::Pip,
+        Source::Uv,
         Source::Cargo,
         Source::Apt,
         Source::Snap,
@@ -38,6 +42,7 @@ impl Source {
             Source::Npm => "npm",
             Source::Bun => "bun",
             Source::Pip => "pip",
+            Source::Uv => "uv",
             Source::Cargo => "cargo",
             Source::Apt => "apt",
             Source::Snap => "snap",
@@ -56,6 +61,7 @@ impl Source {
             Source::Npm => "Npm",
             Source::Bun => "Bun",
             Source::Pip => "Pip",
+            Source::Uv => "uv",
             Source::Cargo => "Cargo",
             Source::Apt => "APT",
             Source::Snap => "Snap",
@@ -70,6 +76,7 @@ impl Source {
             Source::Npm => "Node JS's package manager. Global packages for the JavaScript world.",
             Source::Bun => "Fast JavaScript runtime, bundler, and package manager.",
             Source::Pip => "Python's library manager. Global Python packages and tools.",
+            Source::Uv => "Python's fast package and tool manager. Tools installed with uv tool.",
             Source::Cargo => "The Rust package manager. Binaries installed with cargo install.",
             Source::Apt => "The default package manager for Debian/Ubuntu-based Linux distributions.",
             Source::Snap => "The universal Linux package manager by Canonical.",
@@ -85,6 +92,7 @@ impl Source {
             Source::Npm => Some("npm"),
             Source::Bun => Some("bun"),
             Source::Pip => Some("pip3"),
+            Source::Uv => Some("uv"),
             Source::Cargo => Some("cargo"),
             Source::Apt => Some("apt-get"),
             Source::Snap => Some("snap"),
@@ -96,7 +104,7 @@ impl Source {
     /// True when the manager can list what is available, not only what is installed.
     /// The others are driven by name: type a package name and install it.
     pub fn has_catalogue(self) -> bool {
-        matches!(self, Source::Apt | Source::Flatpak)
+        matches!(self, Source::Apt | Source::Flatpak | Source::Homebrew)
     }
 
     /// Letter shown on the default icon for this manager.
@@ -106,6 +114,7 @@ impl Source {
             Source::Npm => "N",
             Source::Bun => "B",
             Source::Pip => "Py",
+            Source::Uv => "uv",
             Source::Cargo => "Rs",
             Source::Apt => "A",
             Source::Snap => "S",
@@ -121,6 +130,7 @@ impl Source {
             Source::Npm => 0xb83a3a,
             Source::Bun => 0x8a6d3b,
             Source::Pip => 0x3775a9,
+            Source::Uv => 0x5a4fcf,
             Source::Cargo => 0x9a4a1e,
             Source::Apt => 0xc0502a,
             Source::Snap => 0x7d4fa0,
@@ -131,7 +141,7 @@ impl Source {
 }
 
 /// One entry in the package list, from any manager.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Package {
     pub source: Source,
     /// Identifier unique within its manager: package name, Flatpak application ID,
@@ -159,6 +169,9 @@ pub struct Package {
     pub upgradable: bool,
     /// Icon file for this package, when one can be found on disk.
     pub icon: Option<PathBuf>,
+    /// True for results of an online search (not installed, not in the loaded catalogue).
+    #[serde(skip)]
+    pub online: bool,
 }
 
 impl Package {
@@ -188,6 +201,7 @@ impl Package {
             homepage: String::new(),
             upgradable: false,
             icon: None,
+            online: false,
         }
     }
 

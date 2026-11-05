@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Apt Manager
+Comment=Install, remove and update packages from APT, Flatpak, Snap and more
+Exec=apt-manager
+Terminal=false
+Categories=System;PackageManager;

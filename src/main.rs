@@ -1,11 +1,17 @@
 mod apt;
+mod cache;
 mod appimage;
 mod flatpak;
 mod job;
+mod load;
 mod managers;
 mod model;
 mod prefs;
+mod transaction;
+mod plan;
 mod privileged;
+mod search;
+mod track;
 mod ui;
 
 use std::path::Path;

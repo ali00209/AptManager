@@ -4,6 +4,7 @@ pub mod app;
 pub mod bottom_bar;
 pub mod details;
 pub mod list;
+pub mod loads;
 pub mod loader;
 pub mod preferences;
 pub mod progress;
