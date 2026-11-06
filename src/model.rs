@@ -123,19 +123,19 @@ impl Source {
         }
     }
 
-    /// Background colour of the default icon.
-    pub fn color(self) -> u32 {
+    /// Chip colours as (tinted background, bright text), matching the Design canvas.
+    pub fn chip(self) -> (u32, u32) {
         match self {
-            Source::Homebrew => 0xb8741a,
-            Source::Npm => 0xb83a3a,
-            Source::Bun => 0x8a6d3b,
-            Source::Pip => 0x3775a9,
-            Source::Uv => 0x5a4fcf,
-            Source::Cargo => 0x9a4a1e,
-            Source::Apt => 0xc0502a,
-            Source::Snap => 0x7d4fa0,
-            Source::Flatpak => 0x3f72b8,
-            Source::AppImage => 0x2a8a7f,
+            Source::Apt => (0x3a2f1a, 0xf2b35c),
+            Source::Flatpak => (0x1b2a3d, 0x7fb2f0),
+            Source::Uv => (0x261f3d, 0xb7a8ff),
+            Source::Npm => (0x3a1d1d, 0xf08a8a),
+            Source::Snap => (0x1a3434, 0x6fd3c4),
+            Source::Pip => (0x1f2e1f, 0x9fd49a),
+            Source::Bun => (0x2e2a18, 0xe8d27a),
+            Source::Cargo => (0x3a2418, 0xf0a070),
+            Source::Homebrew => (0x2e2614, 0xe0c060),
+            Source::AppImage => (0x23262e, 0xc3c8d6),
         }
     }
 }
@@ -177,6 +177,16 @@ pub struct Package {
 impl Package {
     pub fn is_installed(&self) -> bool {
         self.installed.is_some()
+    }
+
+    /// Whether a tick box means anything for this package: an install, or an update.
+    /// Installed packages without an update, and AppImages, have no tick box.
+    pub fn tickable(&self) -> bool {
+        if self.is_installed() {
+            self.upgradable
+        } else {
+            self.source != Source::AppImage
+        }
     }
 
     /// Key that is unique across all managers.

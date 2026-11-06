@@ -30,7 +30,7 @@ impl AppView {
             .flex_row()
             .overflow_hidden()
             .child(main)
-            .child(self.render_details(cx))
+            .when(self.show_details, |d| d.child(self.render_details(cx)))
             .into_any_element()
     }
 
@@ -64,7 +64,7 @@ impl AppView {
         let check_key = key.clone();
         let select_key = key.clone();
 
-        let checkbox = div()
+        let checkbox_box = div()
             .id(("chk", row))
             .size(px(16.))
             .flex_none()
@@ -83,6 +83,11 @@ impl AppView {
                 }),
             );
 
+        let checkbox = if pkg.tickable() {
+            checkbox_box.into_any_element()
+        } else {
+            div().size(px(16.)).flex_none().into_any_element()
+        };
         let mut name_cell = div()
             .flex_1()
             .min_w(px(180.))
@@ -139,6 +144,7 @@ impl AppView {
             )
             .child(div().w(px(100.)).flex_none().child(human_size(size)))
             .child(div().w(px(150.)).flex_none().child(registry_chip(pkg.source)))
+            .child(self.more_menu(pkg, cx))
             .into_any_element()
     }
 
@@ -152,7 +158,7 @@ impl AppView {
         let check_key = key.clone();
         let select_key = key.clone();
 
-        let checkbox = div()
+        let checkbox_box = div()
             .id(("card-chk", row))
             .size(px(16.))
             .flex_none()
@@ -171,6 +177,11 @@ impl AppView {
                 }),
             );
 
+        let checkbox = if pkg.tickable() {
+            checkbox_box.into_any_element()
+        } else {
+            div().size(px(16.)).flex_none().into_any_element()
+        };
         let state = if pkg.upgradable {
             ("Update available", ACCENT)
         } else if pkg.is_installed() {
@@ -211,7 +222,8 @@ impl AppView {
                             .whitespace_nowrap()
                             .child(pkg.title.clone()),
                     )
-                    .child(checkbox),
+                    .child(checkbox)
+                    .child(self.more_menu(pkg, cx)),
             )
             .child(
                 div()

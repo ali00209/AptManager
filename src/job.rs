@@ -244,3 +244,54 @@ fn last_nonempty(lines: &[String]) -> Option<String> {
         .find(|l| !l.is_empty())
         .map(str::to_string)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tail_keeps_the_last_lines_and_the_log_keeps_them_all() {
+        let h = start("t");
+        for i in 0..20 {
+            log_to(&h, "", &format!("line {i}"));
+        }
+        let p = h.lock().unwrap();
+        assert_eq!(p.tail.len(), TAIL_LINES);
+        assert_eq!(p.tail.back().unwrap(), "line 19");
+        assert_eq!(p.log.len(), 20);
+        assert_eq!(p.log.front().unwrap(), "line 0");
+    }
+
+    #[test]
+    fn the_log_is_capped_and_drops_the_oldest_lines() {
+        let h = start("t");
+        for i in 0..LOG_LINES + 5 {
+            log_to(&h, "", &format!("line {i}"));
+        }
+        let p = h.lock().unwrap();
+        assert_eq!(p.log.len(), LOG_LINES);
+        assert_eq!(p.log.front().unwrap(), "line 5");
+        assert_eq!(p.log.back().unwrap(), &format!("line {}", LOG_LINES + 4));
+    }
+
+    #[test]
+    fn lines_from_a_named_lane_are_prefixed_with_it() {
+        let h = start("t");
+        log_to(&h, "apt", "Reading");
+        assert_eq!(h.lock().unwrap().log.back().unwrap(), "[apt] Reading");
+    }
+
+    #[test]
+    fn apt_status_lines_show_only_their_message() {
+        let h = start("t");
+        log_to(&h, "apt", "pmstatus:Downloading:50:Fetching nano");
+        assert_eq!(h.lock().unwrap().log.back().unwrap(), "[apt] Fetching nano");
+    }
+
+    #[test]
+    fn blank_lines_are_not_recorded() {
+        let h = start("t");
+        log_to(&h, "", "   ");
+        assert!(h.lock().unwrap().log.is_empty());
+    }
+}

@@ -4,12 +4,11 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use crate::actions::{self, Action};
 use crate::model::{human_size, Package, Source};
 use crate::ui::app::AppView;
 use crate::ui::theme::*;
-use crate::ui::widgets::{
-    appimage_actions, details_frame, icon_element, info_row, manager_actions,
-};
+use crate::ui::widgets::{details_frame, icon_element, info_row};
 
 impl AppView {
     pub(crate) fn render_details(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -56,7 +55,7 @@ impl AppView {
                         "Homepage",
                         if pkg.homepage.is_empty() { "—".into() } else { pkg.homepage.clone() },
                     ));
-                manager_actions(pkg, key.clone(), cx)
+                action_buttons(pkg, key.clone(), cx)
             }
             Source::Flatpak => {
                 frame = frame
@@ -73,14 +72,14 @@ impl AppView {
                     ))
                     .child(info_row("Download", human_size(pkg.download_size)))
                     .child(info_row("Installed size", human_size(pkg.installed_size)));
-                flatpak_actions(pkg, key.clone(), cx)
+                action_buttons(pkg, key.clone(), cx)
             }
             Source::AppImage => {
                 frame = frame
                     .child(info_row("File", pkg.name.clone()))
                     .child(info_row("Location", pkg.origin.clone()))
                     .child(info_row("Size", human_size(pkg.installed_size)));
-                appimage_actions(key.clone(), cx)
+                action_buttons(pkg, key.clone(), cx)
             }
             other => {
                 frame = frame
@@ -94,7 +93,7 @@ impl AppView {
                         "Source",
                         if pkg.origin.is_empty() { "—".into() } else { pkg.origin.clone() },
                     ));
-                manager_actions(pkg, key.clone(), cx)
+                action_buttons(pkg, key.clone(), cx)
             }
         };
 
@@ -102,32 +101,39 @@ impl AppView {
     }
 }
 
-/// Flatpak apps: an installed app is removed; a new one is installed for the current user
-/// or for all users, as the user picks.
-pub(crate) fn flatpak_actions(pkg: &Package, key: String, cx: &mut Context<AppView>) -> AnyElement {
-    if pkg.is_installed() {
-        return manager_actions(pkg, key, cx);
+/// The actions for a package, from the same list the ⋯ menu uses. A Flatpak app that is not
+/// installed gets two install buttons, for you or for all users, so the user picks the scope.
+pub(crate) fn action_buttons(pkg: &Package, key: String, cx: &mut Context<AppView>) -> AnyElement {
+    let mut row = div().flex().flex_wrap().gap_2();
+    for (i, action) in actions::available(pkg).into_iter().enumerate() {
+        if action == Action::Install && pkg.source == Source::Flatpak {
+            for (id, label, for_all) in [
+                ("install-for-me", "Install for me", false),
+                ("install-for-all", "Install for all users", true),
+            ] {
+                let k = key.clone();
+                let button = Button::new(id)
+                    .primary()
+                    .label(label)
+                    .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.install_as(k.clone(), for_all, cx);
+                    }));
+                row = row.child(button);
+            }
+            continue;
+        }
+        let k = key.clone();
+        let button = Button::new(format!("detail-action-{i}")).label(action.label());
+        let button = if action.is_danger() {
+            button.danger()
+        } else if matches!(action, Action::Install | Action::Update | Action::Launch) {
+            button.primary()
+        } else {
+            button.ghost()
+        };
+        row = row.child(button.on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
+            this.run_action(k.clone(), action, cx);
+        })));
     }
-    let for_me = key.clone();
-    let for_all = key;
-    div()
-        .flex()
-        .gap_2()
-        .child(
-            Button::new("install-for-me")
-                .primary()
-                .label("Install for me")
-                .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.install_as(for_me.clone(), false, cx);
-                })),
-        )
-        .child(
-            Button::new("install-for-all")
-                .ghost()
-                .label("Install for all users")
-                .on_click(cx.listener(move |this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.install_as(for_all.clone(), true, cx);
-                })),
-        )
-        .into_any_element()
+    row.into_any_element()
 }

@@ -130,8 +130,10 @@ manager's name (APT, Flatpak, npm, pip, and so on), and the list has a Registry 
 
 ### Upgrade All and Updates
 
-**Upgrade All** starts one upgrade job per package that has an update. Each job has its own
-row, Cancel and rollback. **Updates (N)** in the status bar jumps to the first
+**Upgrade All** queues one upgrade job per package that has an update. Each job has its own
+row, Cancel and rollback. At most three run at once; the rest wait in the queue, which the
+job panel counts and can clear with **Cancel queued**. **Update Selected** does the same for
+the ticked packages that have an update. **Updates (N)** in the status bar jumps to the first
 manager with updates.
 
 ## Requirements
@@ -189,6 +191,25 @@ A system step that is already running (for example an `apt-get install`) is allo
 finish, because stopping `dpkg` part way can leave the package database broken. The
 rollback follows after it. The result says what was undone and what could not be.
 
+### Package menu, reinstall and confirmations
+
+- **⋯** on each package row and grid card opens a menu of the actions that apply right now:
+  Install (not installed), Update (an update is waiting), Remove, Reinstall (installed, where
+  supported), Open homepage (when the package has one), and Copy name. AppImages show Launch,
+  Delete file and Copy name. The details panel shows the same actions as buttons.
+- The menu closes on Escape, on a click outside it, or after an item is chosen. Only one menu is open at a time.
+- **Reinstall** keeps the installed version: `apt-get install --reinstall` (APT),
+  `flatpak install --reinstall` in the same scope (Flatpak), remove-then-add for npm and Bun,
+  `cargo install --force --version`, `pip install --force-reinstall --user`, `uv tool install --force`,
+  and `brew reinstall` (Homebrew). Snap and AppImage have no Reinstall.
+- **Every change asks first.** Install, Update, Remove, Reinstall, Upgrade All, Install Selected,
+  dropping files to install, deleting an AppImage, and adding or removing a Flatpak remote show a
+  dialog naming what will change, with **Cancel** and a coloured **Yes**. Remove, Reinstall and
+  Delete use the danger colour. Cancel has the focus, so Enter or Escape cancels. A batch gets one
+  dialog that lists up to 12 packages and counts the rest. The password prompt comes only after Yes.
+- **▥ / ▯** in the toolbar hides and shows the details panel. Hiding it gives the list the full
+  width. The choice is saved in `~/.config/apt-manager/ui.conf`.
+
 ### Parallel jobs and package locks
 
 Installs, removals and upgrades run as jobs. You can start several at once; each job has
@@ -199,8 +220,9 @@ A finished job shows its result. **⧉** copies its headline, result and full lo
 - A package can be in only one job at a time. If you start a job that includes a package
   another job is already changing, the new job refuses at once and says which job holds it.
   Other packages in that selection are not held up by this.
-- **Install Selected** and **Upgrade All** start one job per package, not one job for the whole set,
-  so each package has its own row, Cancel and rollback.
+- **Install Selected**, **Update Selected** and **Upgrade All** start one job per package, not one job
+  for the whole set, so each package has its own row, Cancel and rollback. Updates wait in a queue
+  of three at a time.
 - Privileged commands (APT, system-wide Flatpak and Snap) still run one at a time through
   the root helper, so a second system job waits its turn. A queued job that is cancelled
   while waiting gives up at once and does not run.
@@ -213,6 +235,15 @@ A finished job shows its result. **⧉** copies its headline, result and full lo
 cargo run
 cargo test
 ```
+
+`cargo test` runs 64 tests, covering:
+
+- the privileged helper's whitelist: allowed and refused commands, flags and characters;
+- transactions: rollback in each lane, cancel, and two jobs running side by side;
+- planned commands for install, remove and upgrade, including Flatpak user and system scope;
+- job logs: the full log, the 8-line tail, the 5,000-line cap, lane prefixes and copy text;
+- search ranking and the install-state filter;
+- the cache diff, search parsing, and reading APT, Flatpak and .deb metadata.
 
 Set `RUST_LOG=info` to see GPUI's renderer logs.
 
@@ -262,7 +293,16 @@ Set `RUST_LOG=info` to see GPUI's renderer logs.
 ## Project layout
 
 - `src/main.rs`: startup (PATH setup, root-helper entry point) and the window.
-- `src/ui/app.rs`: window state, actions, and the top-level layout.
+- `src/ui/app.rs`: window state, startup, and the top-level layout. Its methods are split
+  by topic in `src/ui/app/`:
+  - `loading.rs`: per-registry loads and their events.
+  - `registries.rs`: which registries are on and the registry dropdown.
+  - `filter.rs`: search results, the status and updates filters, and ticked packages.
+  - `remote.rs`: online search for npm, Bun and Cargo.
+  - `actions.rs`: install, remove, update, upgrade, drop-to-install and refresh.
+  - `jobs.rs`: running jobs, cancelling them, and copying their logs.
+  - `checks.rs`: rechecking packages after a change.
+  - `sources.rs`: Flatpak remotes.
 - `src/ui/toolbar.rs`: search toolbar, registry dropdown, and the buttons on the right.
 - `src/ui/list.rs`: package list, grid, history, and the browse layout.
 - `src/ui/details.rs`: details panel.
@@ -270,6 +310,9 @@ Set `RUST_LOG=info` to see GPUI's renderer logs.
 - `src/ui/progress.rs`: progress panel for running and finished jobs.
 - `src/ui/bottom_bar.rs`: status bar.
 - `src/ui/widgets.rs`, `src/ui/theme.rs`: shared buttons, icons, colours and sizes.
+- `src/ui/menu.rs`: the ⋯ button and the menu on rows and cards.
+- `src/ui/app/confirm.rs`: the confirmation dialog.
+- `src/actions.rs`: which actions apply to a package, and the wording used in confirmations.
 - `src/ui/loader.rs`: startup detection of installed managers.
 - `src/load.rs`: one thread per registry, sending events to the window.
 - `src/track.rs`: records the commands a load runs, so Cancel can stop them.

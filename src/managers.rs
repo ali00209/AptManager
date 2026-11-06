@@ -539,3 +539,37 @@ fn capture(program: &str, args: &[&str]) -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod uv_tests {
+    use super::*;
+
+    #[test]
+    fn installed_uv_tools_are_listed_when_uv_is_present() {
+        if find_path("uv").is_none() {
+            return; // uv is not installed here
+        }
+        let list = load(Source::Uv).expect("uv tool list runs");
+        println!("uv packages found: {}", list.len());
+        for p in &list {
+            println!("  {} {:?}", p.name, p.installed);
+        }
+        assert!(!list.is_empty(), "uv has tools installed but none were listed");
+    }
+}
+
+#[cfg(test)]
+mod uv_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_uv_package_survives_the_cache_round_trip() {
+        let packages = parse_uv_tools("black v26.5.1\n- black\n- blackd\n");
+        assert_eq!(packages.len(), 1);
+        let json = serde_json::to_string(&packages[0]).expect("serialises");
+        let back: crate::model::Package = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(back.source, Source::Uv);
+        assert_eq!(back.key(), "uv:black");
+        assert_eq!(back.installed.as_deref(), Some("26.5.1"));
+    }
+}

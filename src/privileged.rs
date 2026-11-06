@@ -215,11 +215,12 @@ fn validate(program: &str, args: &[&str]) -> Result<Vec<String>, String> {
 
     match program {
         "apt-get" => {
-            // "--only-upgrade" is the one flag allowed: it stops apt-get from installing new packages.
+            // "--only-upgrade" stops apt-get from installing new packages; "--reinstall" reinstalls
+            // an installed package. These are the only flags allowed.
             let flags_ok = args
                 .iter()
                 .filter(|a| a.starts_with('-'))
-                .all(|a| *a == "--only-upgrade");
+                .all(|a| *a == "--only-upgrade" || *a == "--reinstall");
             if !["update", "install", "remove", "upgrade"].contains(&sub)
                 || !flags_ok
             {
@@ -233,7 +234,7 @@ fn validate(program: &str, args: &[&str]) -> Result<Vec<String>, String> {
             let flags_ok = args
                 .iter()
                 .filter(|a| a.starts_with('-'))
-                .all(|a| ["-y", "--system", "--if-not-exists", "--bundle"].contains(a));
+                .all(|a| ["-y", "--system", "--if-not-exists", "--bundle", "--reinstall"].contains(a));
             if !["install", "uninstall", "update", "remote-add", "remote-delete"].contains(&sub)
                 || !args.contains(&"--system")
                 || !flags_ok
@@ -303,5 +304,63 @@ fn emit(out: &Arc<Mutex<std::io::Stdout>>, line: &str) {
     if let Ok(mut o) = out.lock() {
         let _ = writeln!(o, "{line}");
         let _ = o.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate;
+
+    #[test]
+    fn apt_install_remove_upgrade_and_update_are_allowed() {
+        for sub in ["install", "remove", "upgrade", "update"] {
+            let argv = validate("apt-get", &[sub, "nano"]).expect(sub);
+            assert_eq!(&argv[..3], ["-y", "-o", "APT::Status-Fd=1"]);
+            assert_eq!(argv.last().unwrap(), "nano");
+        }
+    }
+
+    #[test]
+    fn apt_only_upgrade_is_the_one_allowed_flag() {
+        assert!(validate("apt-get", &["install", "--only-upgrade", "nano"]).is_ok());
+        assert!(validate("apt-get", &["install", "--reinstall", "nano"]).is_ok());
+        assert!(validate("apt-get", &["install", "--allow-unauthenticated", "nano"]).is_err());
+        assert!(validate("apt-get", &["install", "-o", "Dir=/", "nano"]).is_err());
+    }
+
+    #[test]
+    fn other_apt_subcommands_are_refused() {
+        assert!(validate("apt-get", &["purge", "nano"]).is_err());
+        assert!(validate("apt-get", &["autoremove"]).is_err());
+    }
+
+    #[test]
+    fn flatpak_needs_the_system_flag_and_a_known_verb() {
+        assert!(validate("flatpak", &["install", "--system", "-y", "flathub", "org.gimp.GIMP"]).is_ok());
+        assert!(validate("flatpak", &["install", "--bundle", "--system", "/tmp/a.flatpak"]).is_ok());
+        assert!(validate("flatpak", &["install", "flathub", "org.gimp.GIMP"]).is_err());
+        assert!(validate("flatpak", &["override", "--system", "org.gimp.GIMP"]).is_err());
+        assert!(validate("flatpak", &["install", "--user", "--system", "x"]).is_err());
+    }
+
+    #[test]
+    fn snap_flags_are_refused() {
+        assert!(validate("snap", &["install", "hello"]).is_ok());
+        assert!(validate("snap", &["install", "--classic", "code"]).is_err());
+        assert!(validate("snap", &["run", "hello"]).is_err());
+    }
+
+    #[test]
+    fn other_programs_are_refused() {
+        assert!(validate("rm", &["-rf", "/"]).is_err());
+        assert!(validate("sh", &["-c", "id"]).is_err());
+    }
+
+    #[test]
+    fn arguments_outside_the_allowed_characters_are_refused() {
+        assert!(validate("apt-get", &["install", "nano;id"]).is_err());
+        assert!(validate("apt-get", &["install", "$(id)"]).is_err());
+        assert!(validate("apt-get", &["install", "a b"]).is_err());
+        assert!(validate("apt-get", &["install", ""]).is_err());
     }
 }

@@ -102,7 +102,7 @@ impl AppView {
             .bg(rgb(PANEL))
             .border_1()
             .border_color(rgb(BORDER))
-            .child(glyph_box(src.glyph(), src.color(), 36.))
+            .child(glyph_box(src.glyph(), 36.))
             .child(
                 div()
                     .flex_1()

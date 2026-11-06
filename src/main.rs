@@ -1,3 +1,4 @@
+mod actions;
 mod apt;
 mod cache;
 mod appimage;

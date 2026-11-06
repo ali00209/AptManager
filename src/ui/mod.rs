@@ -1,6 +1,7 @@
 //! The window: state in `app`, one module per screen or panel, and shared pieces.
 
 pub mod app;
+pub mod menu;
 pub mod bottom_bar;
 pub mod details;
 pub mod list;

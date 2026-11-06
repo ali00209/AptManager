@@ -13,8 +13,9 @@ use crate::ui::theme::*;
 use crate::ui::widgets::registry_chip;
 
 impl AppView {
-    /// One row: search, registry dropdown, Has updates and Refresh on the left;
-    /// the view toggle, History, Upgrade All, Install Selected and Preferences on the right.
+    /// Two rows. The top row navigates: search, the view toggle, and the utilities.
+    /// The bottom row filters on the left and acts on the right, so the main action
+    /// (Upgrade All) sits where the eye ends after choosing a filter.
     pub(crate) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_count = self.ticked_to_install().len();
         let install_label = if selected_count > 0 {
@@ -40,7 +41,7 @@ impl AppView {
             let installed = self.state_filter.contains(&StateFilter::Installed);
             let missing = self.state_filter.contains(&StateFilter::NotInstalled);
             match (installed, missing) {
-                (false, false) => "Status: default ▾",
+                (false, false) => "Status: installed (default) ▾",
                 (true, false) => "Status: installed ▾",
                 (false, true) => "Status: not installed ▾",
                 (true, true) => "Status: all ▾",
@@ -51,6 +52,14 @@ impl AppView {
             .label(state_label)
             .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
                 this.toggle_state_menu(cx);
+            }));
+
+        let details_btn = Button::new("toggle-details")
+            .ghost()
+            .label(if self.show_details { "▥" } else { "▯" })
+            .tooltip(if self.show_details { "Hide the details panel" } else { "Show the details panel" })
+            .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                this.toggle_details(cx);
             }));
 
         let scope_btn = Button::new("flatpak-scope")
@@ -75,20 +84,38 @@ impl AppView {
         let history_btn = Button::new("history").label("History");
         let history_btn = if self.show_history { history_btn.primary() } else { history_btn.ghost() };
 
-        let mut row = div()
-            .h(px(50.))
+        // Top row: search on the left, view and utilities on the right.
+        let top = div()
+            .h(px(56.))
             .w_full()
             .flex()
             .items_center()
             .gap_2()
-            .px_3()
-            .bg(rgb(BG))
+            .px_4()
+            .bg(rgb(PANEL))
             .border_b_1()
             .border_color(rgb(BORDER))
-            .child(div().w(px(320.)).child(Input::new(&self.search)))
-            .child(registries_btn)
-            .child(state_btn)
-            .child(updates_btn)
+            .child(div().w(px(360.)).child(Input::new(&self.search)))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .p(px(2.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(rgb(BORDER))
+                    .gap(px(2.))
+                    .child(list_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.grid = false;
+                        cx.notify();
+                    })))
+                    .child(grid_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.grid = true;
+                        cx.notify();
+                    }))),
+            )
+            .child(details_btn)
             .child(
                 Button::new("refresh")
                     .ghost()
@@ -98,29 +125,31 @@ impl AppView {
                         this.refresh(cx);
                     })),
             )
+            .child(history_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                this.toggle_history(cx);
+            })))
             .child(
-                list_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.grid = false;
-                    cx.notify();
-                })),
-            )
-            .child(
-                grid_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.grid = true;
-                    cx.notify();
-                })),
-            )
-            .child(div().flex_1())
-            .child(
-                history_btn.on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.toggle_history(cx);
-                })),
+                Button::new("open-prefs")
+                    .ghost()
+                    .label("⚙ Preferences")
+                    .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                        this.page = Page::Preferences;
+                        cx.notify();
+                    })),
             );
 
+        // Bottom row: filters on the left, actions on the right.
+        let update_selected = self.ticked_to_update().len();
+        let update_selected_label = if update_selected > 0 {
+            format!("Update Selected ({update_selected})")
+        } else {
+            "Update Selected".to_string()
+        };
+        let mut actions = div().flex().items_center().gap_2();
         if updates > 0 {
-            row = row.child(
+            actions = actions.child(
                 Button::new("upgrade-all")
-                    .ghost()
+                    .primary()
                     .label(format!("Upgrade All ({updates})"))
                     .disabled(self.any_loading())
                     .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
@@ -128,26 +157,43 @@ impl AppView {
                     })),
             );
         }
-
-        row.child(scope_btn)
-        .child(
+        actions = actions.child(
+            Button::new("update-selected")
+                .ghost()
+                .label(update_selected_label)
+                .disabled(update_selected == 0)
+                .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
+                    this.update_selected(cx);
+                })),
+        );
+        actions = actions.child(
             Button::new("install-selected")
-                .primary()
+                .ghost()
                 .label(install_label)
                 .disabled(selected_count == 0)
                 .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
                     this.install_selected(cx);
                 })),
-        )
-        .child(
-            Button::new("open-prefs")
-                .ghost()
-                .label("⚙ Preferences")
-                .on_click(cx.listener(|this: &mut AppView, _: &ClickEvent, _window, cx| {
-                    this.page = Page::Preferences;
-                    cx.notify();
-                })),
-        )
+        );
+
+        let bottom = div()
+            .h(px(48.))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .bg(rgb(BG))
+            .border_b_1()
+            .border_color(rgb(BORDER))
+            .child(registries_btn)
+            .child(state_btn)
+            .child(updates_btn)
+            .child(scope_btn)
+            .child(div().flex_1())
+            .child(actions);
+
+        div().w_full().flex().flex_col().child(top).child(bottom)
     }
 
     /// The install-state dropdown: Installed and Not installed, each ticked on or off.

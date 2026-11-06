@@ -235,6 +235,81 @@ pub fn remove(pkg: &Package) -> Option<Step> {
     Some(step(lane, title, forward, undo))
 }
 
+/// Reinstall an installed package at its installed version. Returns `None` when the package
+/// is not installed or its manager has no reinstall (Snap, AppImage). Each manager that
+/// cannot reinstall in one command is removed and then added again.
+pub fn reinstall(pkg: &Package) -> Option<Vec<Step>> {
+    if !pkg.is_installed() {
+        return None;
+    }
+    let name = pkg.name.as_str();
+    let version = pkg.installed.clone().unwrap_or_default();
+    let title = format!("Reinstall {}", pkg.title);
+    let lane = lane_for(pkg);
+    let pinned = |sep: &str| {
+        if version.is_empty() { name.to_string() } else { format!("{name}{sep}{version}") }
+    };
+    match pkg.source {
+        Source::Apt => {
+            // Reinstalling again is the undo, since it leaves the same version in place.
+            let cmd = system("apt-get", &["install", "--reinstall", name]);
+            Some(vec![step(lane, title, cmd.clone(), Some(cmd))])
+        }
+        Source::Flatpak => {
+            let origin = pkg.origin.as_str();
+            let (_, forward) = flatpak(pkg, &["install", "--reinstall", origin, name]);
+            Some(vec![step(lane, title, forward, None)])
+        }
+        Source::Npm => {
+            let spec = pinned("@");
+            Some(vec![
+                step(lane, format!("Remove {}", pkg.title), manager(Source::Npm, &["uninstall", "-g", name]), None),
+                step(lane, title, manager(Source::Npm, &["install", "-g", spec.as_str()]), None),
+            ])
+        }
+        Source::Bun => {
+            let spec = pinned("@");
+            Some(vec![
+                step(lane, format!("Remove {}", pkg.title), manager(Source::Bun, &["remove", "-g", name]), None),
+                step(lane, title, manager(Source::Bun, &["add", "-g", spec.as_str()]), None),
+            ])
+        }
+        Source::Cargo => {
+            let mut args = vec!["install", "--force"];
+            if !version.is_empty() {
+                args.extend(["--version", version.as_str()]);
+            }
+            args.push(name);
+            Some(vec![step(lane, title, manager(Source::Cargo, &args), None)])
+        }
+        Source::Pip => {
+            let spec = pinned("==");
+            Some(vec![step(
+                lane,
+                title,
+                manager(Source::Pip, &["install", "--force-reinstall", "--user", spec.as_str()]),
+                None,
+            )])
+        }
+        Source::Uv => {
+            let spec = pinned("==");
+            Some(vec![step(lane, title, manager(Source::Uv, &["tool", "install", "--force", spec.as_str()]), None)])
+        }
+        Source::Homebrew => Some(vec![step(
+            lane,
+            title,
+            brew(&["reinstall", name], &["reinstall", "--cask", name]),
+            None,
+        )]),
+        Source::Snap | Source::AppImage => None,
+    }
+}
+
+/// Whether the package can be reinstalled by this app.
+pub fn can_reinstall(pkg: &Package) -> bool {
+    reinstall(pkg).is_some()
+}
+
 /// Upgrade a package that has a newer version. The undo installs the old version where
 /// the manager allows it. Returns `None` when the package has no upgrade.
 pub fn upgrade(pkg: &Package) -> Option<Step> {
@@ -565,5 +640,115 @@ mod tests {
         fs::write(&path, "[Flatpak Ref]\nName=org.example.App\nUrl=https://example.org/repo\n").unwrap();
         assert_eq!(flatpakref_app_id(&path).unwrap(), "org.example.App");
         let _ = fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+    use crate::transaction::Cmd;
+
+    /// The program, arguments and privilege of an Exec command.
+    fn exec(cmd: &Cmd) -> (bool, String, Vec<String>) {
+        match cmd {
+            Cmd::Exec { privileged, program, args, .. } => (*privileged, program.clone(), args.clone()),
+            _ => panic!("expected a command"),
+        }
+    }
+
+    fn apt(name: &str, installed: Option<&str>) -> Package {
+        let mut p = Package::new(Source::Apt, name);
+        p.installed = installed.map(str::to_string);
+        p
+    }
+
+    #[test]
+    fn an_apt_install_is_undone_by_removing_it() {
+        let step = install(&apt("nano", None)).unwrap();
+        assert!(matches!(step.lane, Lane::Privileged));
+        assert_eq!(exec(&step.forward).1, "apt-get");
+        assert_eq!(exec(&step.forward).2, ["install", "nano"]);
+        assert_eq!(exec(&step.undo.unwrap()).2, ["remove", "nano"]);
+    }
+
+    #[test]
+    fn an_apt_remove_is_undone_by_reinstalling_the_same_version() {
+        let step = remove(&apt("nano", Some("7.2-1"))).unwrap();
+        assert_eq!(exec(&step.forward).2, ["remove", "nano"]);
+        assert_eq!(exec(&step.undo.unwrap()).2, ["install", "nano=7.2-1"]);
+    }
+
+    #[test]
+    fn a_remove_with_no_known_version_has_no_undo() {
+        let step = remove(&apt("nano", None));
+        assert!(step.is_some());
+        assert!(step.unwrap().undo.is_none());
+    }
+
+    #[test]
+    fn a_flatpak_for_the_user_runs_without_the_password() {
+        let mut p = Package::new(Source::Flatpak, "org.gimp.GIMP");
+        p.origin = "flathub".into();
+        p.scope = scope_name(false).into();
+        let step = install(&p).unwrap();
+        assert!(matches!(step.lane, Lane::Manager(Source::Flatpak)));
+        let (privileged, program, args) = exec(&step.forward);
+        assert!(!privileged);
+        assert_eq!(program, "flatpak");
+        assert!(args.contains(&"--user".to_string()));
+        assert!(args.contains(&"flathub".to_string()));
+    }
+
+    #[test]
+    fn a_flatpak_for_all_users_goes_through_the_helper() {
+        let mut p = Package::new(Source::Flatpak, "org.gimp.GIMP");
+        p.origin = "flathub".into();
+        p.scope = scope_name(true).into();
+        let step = install(&p).unwrap();
+        assert!(matches!(step.lane, Lane::Privileged));
+        let (privileged, _, args) = exec(&step.forward);
+        assert!(privileged);
+        assert!(args.contains(&"--system".to_string()));
+    }
+
+    #[test]
+    fn a_snap_upgrade_has_no_undo() {
+        let mut p = Package::new(Source::Snap, "hello");
+        p.installed = Some("2.10".into());
+        p.candidate = "2.11".into();
+        p.upgradable = true;
+        let step = upgrade(&p).unwrap();
+        assert!(step.undo.is_none());
+    }
+
+    #[test]
+    fn reinstall_keeps_the_installed_version_where_the_manager_allows_it() {
+        let mut p = apt("nano", Some("7.2-1"));
+        let step = reinstall(&p).unwrap();
+        assert_eq!(step.len(), 1);
+        assert_eq!(exec(&step[0].forward).2, ["install", "--reinstall", "nano"]);
+
+        p = Package::new(Source::Npm, "left-pad");
+        p.installed = Some("1.3.0".into());
+        let steps = reinstall(&p).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(exec(&steps[0].forward).2, ["uninstall", "-g", "left-pad"]);
+        assert_eq!(exec(&steps[1].forward).2, ["install", "-g", "left-pad@1.3.0"]);
+    }
+
+    #[test]
+    fn reinstall_is_offered_only_for_installed_packages_of_managers_that_support_it() {
+        assert!(reinstall(&apt("nano", None)).is_none());
+        let mut snap = Package::new(Source::Snap, "hello");
+        snap.installed = Some("2.10".into());
+        assert!(reinstall(&snap).is_none());
+        let mut app = Package::new(Source::AppImage, "x.AppImage");
+        app.installed = Some("1".into());
+        assert!(reinstall(&app).is_none());
+    }
+
+    #[test]
+    fn an_appimage_is_not_installed_from_the_catalogue() {
+        assert!(install(&Package::new(Source::AppImage, "x.AppImage")).is_none());
     }
 }

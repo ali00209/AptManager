@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use crate::model::Source;
 
-fn path() -> PathBuf {
+fn config_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -21,7 +21,58 @@ fn path() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".config")
         });
-    base.join("apt-manager").join("managers.conf")
+    base.join("apt-manager")
+}
+
+fn path() -> PathBuf {
+    config_dir().join("managers.conf")
+}
+
+fn ui_path() -> PathBuf {
+    config_dir().join("ui.conf")
+}
+
+/// Whether the details panel is shown. It is shown unless the saved choice says `details=off`.
+pub fn details_shown() -> bool {
+    parse_details(&fs::read_to_string(ui_path()).unwrap_or_default())
+}
+
+pub fn parse_details(text: &str) -> bool {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("details="))
+        .map(|v| v.trim() != "off")
+        .unwrap_or(true)
+}
+
+/// Save whether the details panel is shown.
+pub fn save_details_shown(shown: bool) -> Result<(), String> {
+    let file = ui_path();
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {e}", dir.display()))?;
+    }
+    let text = format!(
+        "# apt-manager: interface settings\ndetails={}\n",
+        if shown { "on" } else { "off" }
+    );
+    fs::write(&file, text).map_err(|e| format!("Cannot save {}: {e}", file.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_details;
+
+    #[test]
+    fn details_are_shown_by_default_and_when_saved_on() {
+        assert!(parse_details(""));
+        assert!(parse_details("details=on\n"));
+        assert!(parse_details("# note\n  details=on  \n"));
+    }
+
+    #[test]
+    fn details_stay_hidden_when_saved_off() {
+        assert!(!parse_details("details=off\n"));
+        assert!(!parse_details("# apt-manager: interface settings\ndetails=off\n"));
+    }
 }
 
 /// The explicit on/off choices saved so far. Managers without an entry are not in the map.
